@@ -4,6 +4,10 @@ A real-time music information system that extracts currently playing track data 
 
 ## Overview
 
+<img width="714" height="603" alt="Screenshot 2025-10-14 at 20 16 29" src="https://github.com/user-attachments/assets/39524d29-beef-40bc-b4c9-abac7d1ce72c" />
+<img width="698" height="452" alt="Screenshot 2025-10-14 at 20 22 25" src="https://github.com/user-attachments/assets/8e4a1852-cab8-4604-84a9-10e5f792e751" />
+
+
 This tool monitors Rekordbox's database for track changes and automatically generates multiple text files containing current song information. These files can be used as text sources in OBS Studio to display real-time music information during live streams or recordings.
 
 ## System Requirements
