@@ -23,7 +23,7 @@ python3 --version
 
 # Create virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
-    echo "📦 Creating virtual environment..."
+    echo "Creating virtual environment..."
     python3 -m venv venv
     if [ $? -ne 0 ]; then
         echo "Failed to create virtual environment"
@@ -34,16 +34,16 @@ fi
 echo "Virtual environment ready"
 
 # Activate virtual environment
-echo "🔧 Activating virtual environment..."
+echo "Activating virtual environment..."
 source venv/bin/activate
 
 # Upgrade pip
-echo "📈 Upgrading pip..."
+echo "Upgrading pip..."
 python -m pip install --upgrade pip
 
 # Install required packages
-echo "📦 Installing required packages..."
-pip install pyrekordbox sqlalchemy
+echo "Installing required packages..."
+pip install -r requirements.txt
 
 # Make shell scripts executable
 chmod +x start_obs_monitor.sh
@@ -52,7 +52,7 @@ chmod +x stop_obs_monitor.sh
 echo ""
 echo "Setup completed successfully!"
 echo ""
-echo "🚀 You can now run:"
+echo "You can now run:"
 echo "   - ./start_obs_monitor.sh  (to start monitoring)"
 echo "   - ./stop_obs_monitor.sh   (to stop monitoring)"
 echo ""

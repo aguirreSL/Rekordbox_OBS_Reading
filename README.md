@@ -40,7 +40,7 @@ chmod +x setup.sh
    - macOS/Linux: `source venv/bin/activate`
 4. **Install dependencies:**
    ```bash
-   pip install pyrekordbox sqlalchemy
+   pip install -r requirements.txt
    ```
 
 ## Usage
