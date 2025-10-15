@@ -189,10 +189,4 @@ For issues or questions:
 2. Check that all dependencies are properly installed
 3. Ensure proper file permissions for database access
 4. Review console output for error messages
-## Support
 
-For issues or questions:
-1. Verify Rekordbox is running and playing music
-2. Check that all dependencies are properly installed
-3. Ensure proper file permissions for database access
-4. Review console output for error messages
