@@ -4,8 +4,8 @@
 # Usage: ./start_obs_monitor.sh
 
 echo "Starting Rekordbox → OBS integration"
-echo "📁 Output folder: $(pwd)/obs_output"
-echo "⏱️ Checking for changes every 10 seconds"
+echo " Output folder: $(pwd)/obs_output"
+echo " Checking for changes every 10 seconds"
 echo ""
 echo "To stop, press Ctrl+C"
 echo ""

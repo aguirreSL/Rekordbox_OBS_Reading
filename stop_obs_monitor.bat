@@ -6,7 +6,7 @@ echo Stopping Rekordbox → OBS integration...
 
 REM Find and kill the process
 for /f "tokens=2" %%i in ('tasklist /FI "IMAGENAME eq python.exe" /FO CSV ^| findstr "track.py"') do (
-    echo 🔍 Found Python process: %%i
+    echo Found Python process: %%i
     taskkill /PID %%i /F >nul 2>&1
 )
 

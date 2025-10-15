@@ -3,8 +3,8 @@ REM Script to start Rekordbox monitoring for OBS (Windows)
 REM Usage: start_obs_monitor.bat
 
 echo Starting Rekordbox → OBS integration
-echo 📁 Output folder: %cd%\obs_output
-echo ⏱️ Checking for changes every 10 seconds
+echo  Output folder: %cd%\obs_output
+echo  Checking for changes every 10 seconds
 echo.
 echo To stop, press Ctrl+C
 echo.

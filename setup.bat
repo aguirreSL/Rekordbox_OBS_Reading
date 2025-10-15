@@ -51,6 +51,6 @@ echo You can now run:
 echo    - start_obs_monitor.bat  (to start monitoring)
 echo    - stop_obs_monitor.bat   (to stop monitoring)
 echo.
-echo 📖 See README_OBS.md for detailed instructions
+echo See README_OBS.md for detailed instructions
 echo.
 pause

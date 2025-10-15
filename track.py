@@ -115,9 +115,9 @@ def write_current_track_to_file(output_dir="obs_output"):
                 'title.txt': track_info['title'],
                 'album.txt': track_info['album'],
                 'full_info.txt': f"""{track_info['title']}
-👤 {track_info['artist']}
-💿 {track_info['album']}
-⏰ {track_info['last_played'].strftime('%H:%M:%S')}""",
+ {track_info['artist']}
+ {track_info['album']}
+ {track_info['last_played'].strftime('%H:%M:%S')}""",
                 'track_info.json': json.dumps(track_info, default=str, ensure_ascii=False, indent=2)
             }
             
@@ -207,7 +207,7 @@ def update_music_history(track_info, output_dir="obs_output", max_history=15):
                         f.write(f"{i:2d}. {track['artist']} - {track['title']} CURRENT\n")
                     else:
                         f.write(f"   {i:2d}. {track['artist']} - {track['title']}\n")
-                    f.write(f"       💿 {track['album']} | ⏰ {track['played_at']}\n\n")
+                    f.write(f"       Album: {track['album']} | Last Played: {track['played_at']}\n\n")
             
             # Create simple version for OBS (just song list)
             simple_history_file = os.path.join(output_dir, 'history_simple.txt')
@@ -235,9 +235,9 @@ def monitor_and_update(output_dir="obs_output", interval=10):
         interval: Interval in seconds to check for changes
     """
     print(f"Starting continuous monitoring...")
-    print(f"📁 Files will be saved in: {os.path.abspath(output_dir)}")
-    print(f"⏱️  Checking every {interval} seconds")
-    print("🔄 Press Ctrl+C to stop\n")
+    print(f"Files will be saved in: {os.path.abspath(output_dir)}")
+    print(f" Checking every {interval} seconds")
+    print("Press Ctrl+C to stop\n")
     
     last_track = None
     
@@ -266,7 +266,7 @@ def monitor_and_update(output_dir="obs_output", interval=10):
     except KeyboardInterrupt:
         print("\n\nMonitoring interrupted by user")
     except Exception as e:
-        print(f"\nError in monitoring: {e}")
+        print(f"\n Error in monitoring: {e}")
 
 def print_current_track():
     """
@@ -275,19 +275,19 @@ def print_current_track():
     track_info = get_current_playing_track()
     
     if track_info:
-        print("CURRENT SONG IN REKORDBOX")
+        print(" CURRENT SONG IN REKORDBOX ")
         print("=" * 50)
-        print(f"🎶 Title: {track_info['title']}")
-        print(f"👤 Artist: {track_info['artist']}")
-        print(f"💿 Album: {track_info['album']}")
-        print(f"🎼 Genre: {track_info['genre']}")
-        print(f"⏰ Last played: {track_info['last_played']}")
-        print(f"📁 History: {track_info['history_name']}")
+        print(f"Title: {track_info['title']}")
+        print(f"Artist: {track_info['artist']}")
+        print(f"Album: {track_info['album']}")
+        print(f"Genre: {track_info['genre']}")
+        print(f"Last played: {track_info['last_played']}")
+        print(f"History: {track_info['history_name']}")
         print(f"Track #: {track_info['track_number']}")
-        print(f"📂 File: {track_info['file_path']}")
+        print(f"File: {track_info['file_path']}")
         print("=" * 50)
     else:
-        print("Unable to find information about the current song")
+        print(" Unable to find information about the current song")
         print("Make sure that:")
         print("- Rekordbox is running")
         print("- At least one song has been played")

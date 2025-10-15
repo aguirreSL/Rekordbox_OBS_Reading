@@ -20,7 +20,7 @@ else
     if [ -z "$REMAINING" ]; then
         echo "Monitoring stopped successfully!"
     else
-        echo "⚠️  Force stopping..."
+        echo " Force stopping..."
         kill -9 $REMAINING 2>/dev/null
         echo "Process terminated forcefully"
     fi
