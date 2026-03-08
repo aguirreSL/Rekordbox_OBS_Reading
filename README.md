@@ -1,6 +1,6 @@
-# Rekordbox OBS Integration
+# DJ OBS Integration (Rekordbox + Serato DJ Pro)
 
-A real-time music information system that extracts currently playing track data from Rekordbox and provides it to OBS Studio for live streaming integration.
+A real-time music information system that extracts currently playing track data from **Rekordbox** or **Serato DJ Pro** and provides it to OBS Studio for live streaming integration.
 
 ## Overview
 
@@ -8,11 +8,18 @@ A real-time music information system that extracts currently playing track data 
 <img width="698" height="452" alt="Screenshot 2025-10-14 at 20 22 25" src="https://github.com/user-attachments/assets/8e4a1852-cab8-4604-84a9-10e5f792e751" />
 
 
-This tool monitors Rekordbox's database for track changes and automatically generates multiple text files containing current song information. These files can be used as text sources in OBS Studio to display real-time music information during live streams or recordings.
+This tool monitors your DJ software's database/session files for track changes and automatically generates multiple text files containing current song information. These files can be used as text sources in OBS Studio to display real-time music information during live streams or recordings.
+
+### Supported DJ Software
+
+| Software | Detection Method | Notes |
+|----------|-----------------|-------|
+| **Rekordbox** (6.2.0+) | SQLite database | 1-2 min delay after track transitions |
+| **Serato DJ Pro** | Session history files | Near real-time detection |
 
 ## System Requirements
 
-- **Rekordbox**: Version 6.2.0 or higher
+- **DJ Software**: Rekordbox 6.2.0+ or Serato DJ Pro
 - **Python**: Version 3.8 or higher
 - **Operating System**: Windows, macOS, or Linux
 - **OBS Studio**: Any recent version (for text source integration)
@@ -49,16 +56,28 @@ chmod +x setup.sh
 
 ## Usage
 
+### Choosing Your DJ Software Source
+
+Use the `--source` flag to specify which DJ software to read from:
+
+| Flag | Description |
+|------|-------------|
+| `--source auto` | **Default.** Tries both sources, picks the most recently played track |
+| `--source rekordbox` | Read only from Rekordbox |
+| `--source serato` | Read only from Serato DJ Pro |
+
 ### Starting the Monitor
 
 **Windows:**
 ```cmd
 start_obs_monitor.bat
+start_obs_monitor.bat --source serato
 ```
 
 **macOS/Linux:**
 ```bash
 ./start_obs_monitor.sh
+./start_obs_monitor.sh --source serato
 ```
 
 ### Stopping the Monitor
@@ -71,6 +90,26 @@ stop_obs_monitor.bat
 **macOS/Linux:**
 ```bash
 ./stop_obs_monitor.sh
+```
+
+### Command Line Usage
+
+```bash
+# Show current track (auto-detect source)
+python track.py show
+
+# Show current track from specific source
+python track.py show --source serato
+python track.py show --source rekordbox
+
+# Write files once
+python track.py write --source serato
+
+# Monitor continuously (check every 5 seconds, Serato source)
+python track.py monitor 5 --source serato
+
+# Monitor with custom output directory
+python track.py monitor 10 obs_files --source auto
 ```
 
 ### Output Files
@@ -115,30 +154,49 @@ The system creates an `obs_output` directory containing multiple file formats:
 
 ## Technical Details
 
-### Detection Method
+### Rekordbox Detection
 
-The system uses timestamp-based detection to identify track changes in Rekordbox's database. This provides reliable change detection with a typical delay of 1-2 minutes after track transitions.
-
-### Database Access
-
-- Reads from Rekordbox's local SQLite database
+- Uses timestamp-based detection to identify track changes in Rekordbox's database
+- Reads from Rekordbox's local SQLite database via pyrekordbox
 - No modification of Rekordbox data
-- Uses SQLAlchemy for robust database queries
+- Typical delay of 1-2 minutes after track transitions
+
+### Serato DJ Pro Detection
+
+- Reads the binary session history files from `~/Music/_Serato_/History/Sessions/`
+- Parses Serato's TLV (Tag-Length-Value) binary format
+- Extracts title, artist, album, genre, key, and hardware info
+- No external dependencies required (uses Python's built-in `struct` module)
+- No modification of Serato data
 
 ### History Management
 
 - Maintains rolling history of last 15 tracks
 - Automatic duplicate prevention
 - Persistent storage across restarts
+- Tracks which source (Rekordbox/Serato) each song came from
 
 ## Troubleshooting
 
-### Common Issues
+### Rekordbox Issues
 
 **No track detection:**
 - Ensure Rekordbox is running and playing music
 - Verify database file location (typically in Music/Pioneer/rekordbox/)
 - Check that Python has read access to the database
+
+### Serato DJ Pro Issues
+
+**No track detection:**
+- Ensure Serato DJ Pro is running and has played at least one track
+- Verify the `_Serato_` folder exists at `~/Music/_Serato_/`
+- Check that session files exist in `~/Music/_Serato_/History/Sessions/`
+
+**Stale track data:**
+- Serato session files update when tracks are loaded/played
+- Try loading a new track onto a deck
+
+### General Issues
 
 **File encoding problems:**
 - All output files use UTF-8 encoding
@@ -146,37 +204,30 @@ The system uses timestamp-based detection to identify track changes in Rekordbox
 
 **Performance considerations:**
 - Monitor uses minimal system resources
-- Database queries are optimized for efficiency
+- Database/file queries are optimized for efficiency
 - Background process runs independently
-
-### Command Line Usage
-
-**View current track:**
-```bash
-python track.py
-```
-
-**Monitor mode:**
-```bash
-python track.py monitor
-```
 
 ## File Structure
 
 ```
 RekordboxReading/
-├── track.py                 # Main application
-├── setup.sh/.bat           # Installation scripts
+├── track.py                 # Main application & CLI
+├── rekordbox_reader.py      # Rekordbox database reader
+├── serato_reader.py         # Serato session file parser
+├── setup.sh/.bat            # Installation scripts
 ├── start_obs_monitor.sh/.bat # Start monitoring
 ├── stop_obs_monitor.sh/.bat  # Stop monitoring
 ├── obs_output/              # Generated text files
-└── venv/                   # Python virtual environment
+└── venv/                    # Python virtual environment
 ```
 
 ## Dependencies
 
 - **pyrekordbox** (0.4.4): Rekordbox database access
 - **sqlalchemy** (2.0.44): Database query framework
+- **spotipy** (2.25.2): Spotify track metadata (optional, for Spotify-sourced tracks in Rekordbox)
+
+> **Note:** Serato DJ Pro support requires no additional dependencies — it uses only Python's built-in modules.
 
 ## License
 
@@ -185,8 +236,8 @@ Open source software. See source code for implementation details.
 ## Support
 
 For issues or questions:
-1. Verify Rekordbox is running and playing music
+1. Verify your DJ software is running and playing music
 2. Check that all dependencies are properly installed
-3. Ensure proper file permissions for database access
-4. Review console output for error messages
-
+3. Ensure proper file permissions for database/file access
+4. Try specifying the source explicitly: `--source rekordbox` or `--source serato`
+5. Review console output for error messages
