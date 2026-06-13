@@ -178,9 +178,20 @@ def get_current_playing_track():
             'history_name': source_history.Name,
             'track_number': most_recent_song.TrackNo,
             'is_spotify': is_spotify_track,
+            'deck': 0,
             'source': 'rekordbox'
         }
         
     except Exception as e:
         print(f"Error reading Rekordbox data: {e}")
         return None
+
+def get_current_tracks_by_deck():
+    """
+    Returns tracks per deck for Rekordbox. Since Rekordbox SQLite 
+    history does not expose deck explicitly, maps latest track to deck 0.
+    """
+    track = get_current_playing_track()
+    if track:
+        return {0: track}
+    return {}
