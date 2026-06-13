@@ -35,6 +35,10 @@ ENV/
 *.swo
 *~
 
+# Local Claude Code rules (not versioned)
+CLAUDE.md
+.claude/
+
 # OS
 .DS_Store
 .DS_Store?

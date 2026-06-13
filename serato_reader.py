@@ -395,23 +395,31 @@ def _get_decks_from_sqlite():
 
 def get_current_tracks_by_deck():
     """
-    Gets the currently loaded track per deck from Serato DJ Pro.
-    
-    Priority:
-      1. SQLite database (tracks with end_time=-1, works even when paused)
-      2. lsof live detection (fallback if SQLite unavailable)
-      3. Session file parsing (last resort)
-    
+    Gets the currently LOADED track per deck from Serato DJ Pro.
+
+    Only signals that reflect what is actually on the decks right now are used:
+      1. SQLite database — rows with end_time = -1 mark tracks loaded on a deck
+         (works even when paused). Most reliable.
+      2. lsof — Serato keeps the audio file of each loaded deck open as a file
+         descriptor; if no audio files are open, nothing is loaded.
+
+    The session history file is deliberately NOT used as a fallback: it is a
+    play *history* and always contains the last tracks played, so reading it
+    here reports unloaded tracks as if they were still on the decks (e.g. a
+    finished set keeps showing the last song). When both signals above are
+    empty, nothing is loaded and we return {}.
+
     Returns:
         dict: A mapping of deck number (int) to track information dict.
+              Empty dict means nothing is currently loaded.
     """
     try:
-        # 1. Try SQLite database (most reliable, works when paused)
+        # 1. SQLite database (most reliable, works when paused)
         sqlite_decks = _get_decks_from_sqlite()
         if sqlite_decks:
             return sqlite_decks
-        
-        # 2. Try lsof live detection
+
+        # 2. lsof live detection (audio files Serato currently holds open)
         live_files = _get_live_deck_files()
         if live_files:
             decks = {}
@@ -419,25 +427,9 @@ def get_current_tracks_by_deck():
                 deck_id = i + 1
                 decks[deck_id] = _build_track_info_from_file(filepath, deck_id)
             return decks
-        
-        # 3. Fall back to session file parsing
-        session_path = find_latest_session()
-        if not session_path:
-            return {}
-        
-        entries = parse_session_file(session_path)
-        if not entries:
-            return {}
-        
-        decks = {}
-        for entry in reversed(entries):
-            deck_id = entry.get(FIELD_DECK, 0)
-            if deck_id not in decks and deck_id > 0:
-                decks[deck_id] = _entry_to_track_info(entry, session_path)
-            if len(decks) >= 4:
-                break
-                
-        return decks
+
+        # Nothing loaded.
+        return {}
     except Exception as e:
         print(f"Error reading Serato decks: {e}")
         return {}
