@@ -11,6 +11,7 @@ byte order and UTF-16BE encoded strings.
 import struct
 import os
 import glob
+import subprocess
 from datetime import datetime
 
 
@@ -201,21 +202,173 @@ def _entry_to_track_info(entry, session_path=None):
         'is_spotify': False,
         'key': entry.get(FIELD_KEY, ""),
         'hardware': entry.get(FIELD_HARDWARE, ""),
+        'deck': entry.get(FIELD_DECK, 0),
         'source': 'serato'
     }
 
 
+# Audio file extensions that Serato DJ Pro can play
+AUDIO_EXTENSIONS = (
+    '.mp3', '.m4a', '.wav', '.flac', '.aiff', '.aif',
+    '.ogg', '.wma', '.alac', '.aac',
+)
+
+
+def _get_live_deck_files():
+    """
+    Uses lsof to detect audio files currently open by Serato DJ Pro.
+    
+    Serato keeps the audio files of tracks loaded on its decks open as
+    file descriptors. By listing open files for the Serato process, we
+    can determine what is currently loaded/playing in real-time.
+    
+    Returns:
+        list[str]: List of absolute paths to audio files currently open
+    """
+    try:
+        result = subprocess.run(
+            ['lsof', '-c', 'Serato'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return []
+        
+        audio_files = []
+        for line in result.stdout.splitlines():
+            # lsof output columns are separated by whitespace, but file paths
+            # can contain spaces. The path is everything after the inode column.
+            # Format: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+            # We look for lines containing audio file extensions
+            lower_line = line.lower()
+            if any(ext in lower_line for ext in AUDIO_EXTENSIONS):
+                # Extract the file path - it starts after the NODE column
+                # Split into at most 9 parts (the 9th part onwards is the path)
+                parts = line.split(None, 8)
+                if len(parts) >= 9:
+                    filepath = parts[8]
+                    if os.path.isfile(filepath):
+                        audio_files.append(filepath)
+        
+        return audio_files
+        
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        print(f"Warning: Could not run lsof for live deck detection: {e}")
+        return []
+
+
+def _parse_artist_title_from_filename(filepath):
+    """
+    Extracts artist and title from a filename following the common
+    DJ convention: 'Artist - Title.ext'
+    
+    Args:
+        filepath: Full path to the audio file
+        
+    Returns:
+        tuple: (artist, title)
+    """
+    basename = os.path.splitext(os.path.basename(filepath))[0]
+    
+    if ' - ' in basename:
+        parts = basename.split(' - ', 1)
+        return parts[0].strip(), parts[1].strip()
+    
+    return "Unknown Artist", basename.strip()
+
+
+def _build_track_info_from_file(filepath, deck_number=0):
+    """
+    Builds a standardized track info dict from an audio file path.
+    
+    Parses artist/title from the filename convention 'Artist - Title.ext'.
+    
+    Args:
+        filepath: Path to the audio file
+        deck_number: Deck number (1-based) to assign
+        
+    Returns:
+        dict: Standardized track information
+    """
+    artist, title = _parse_artist_title_from_filename(filepath)
+    
+    return {
+        'title': title,
+        'artist': artist,
+        'album': "Unknown Album",
+        'genre': "Unknown Genre",
+        'file_path': filepath,
+        'last_played': datetime.now(),
+        'history_name': "Serato Live",
+        'track_number': deck_number,
+        'is_spotify': False,
+        'key': "",
+        'hardware': "",
+        'deck': deck_number,
+        'source': 'serato'
+    }
+
+
+def get_current_tracks_by_deck():
+    """
+    Gets the currently loaded track per deck from Serato DJ Pro.
+    
+    First tries lsof to detect tracks loaded on decks in real-time.
+    Falls back to session file parsing if lsof returns no results.
+    
+    Returns:
+        dict: A mapping of deck number (int) to track information dict.
+    """
+    try:
+        # Try live detection first via lsof
+        live_files = _get_live_deck_files()
+        if live_files:
+            decks = {}
+            for i, filepath in enumerate(live_files):
+                deck_id = i + 1  # 1-based deck numbering
+                decks[deck_id] = _build_track_info_from_file(filepath, deck_id)
+            return decks
+        
+        # Fall back to session file parsing
+        session_path = find_latest_session()
+        if not session_path:
+            return {}
+        
+        entries = parse_session_file(session_path)
+        if not entries:
+            return {}
+        
+        decks = {}
+        for entry in reversed(entries):
+            deck_id = entry.get(FIELD_DECK, 0)
+            if deck_id not in decks and deck_id > 0:
+                decks[deck_id] = _entry_to_track_info(entry, session_path)
+            if len(decks) >= 4:
+                break
+                
+        return decks
+    except Exception as e:
+        print(f"Error reading Serato decks: {e}")
+        return {}
+
+
 def get_current_playing_track():
     """
-    Gets the most recently played track from Serato DJ Pro.
+    Gets the currently playing/loaded track from Serato DJ Pro.
     
-    Reads the latest session file and returns the last entry,
-    which represents the most recently played/loaded track.
+    First tries lsof to detect tracks loaded on decks in real-time.
+    Falls back to session file parsing if lsof returns no results.
     
     Returns:
         dict: Track information or None if not found
     """
     try:
+        # Try live detection first via lsof
+        live_files = _get_live_deck_files()
+        if live_files:
+            # Return the last loaded file (most recent deck load)
+            return _build_track_info_from_file(live_files[-1], len(live_files))
+        
+        # Fall back to session file parsing
         session_path = find_latest_session()
         if not session_path:
             return None
@@ -239,10 +392,19 @@ def get_latest_session_mtime():
     Returns the modification time of the latest session file,
     useful for 'auto' source detection.
     
+    When Serato has live tracks loaded (detected via lsof), returns
+    the current time to ensure it takes priority over other sources.
+    
     Returns:
         float: Modification time as Unix timestamp, or 0 if not found
     """
+    # If Serato has live tracks loaded, return current time
+    live_files = _get_live_deck_files()
+    if live_files:
+        return datetime.now().timestamp()
+    
     session_path = find_latest_session()
     if session_path:
         return os.path.getmtime(session_path)
     return 0
+

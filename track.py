@@ -77,6 +77,34 @@ def _auto_detect_track():
     return rekordbox_track or serato_track
 
 
+
+def get_current_tracks_by_deck(source="auto"):
+    if source == "rekordbox":
+        return rekordbox_reader.get_current_tracks_by_deck()
+    elif source == "serato":
+        return serato_reader.get_current_tracks_by_deck()
+    elif source == "auto":
+        rb = None
+        sr = None
+        try:
+            rb = rekordbox_reader.get_current_tracks_by_deck()
+        except: pass
+        try:
+            sr = serato_reader.get_current_tracks_by_deck()
+        except: pass
+        
+        rb_latest = max([t['last_played'] for t in rb.values()]) if rb else None
+        sr_latest = max([t['last_played'] for t in sr.values()]) if sr else None
+        
+        if rb_latest and sr_latest:
+            return rb if rb_latest > sr_latest else sr
+        elif rb_latest:
+            return rb
+        elif sr_latest:
+            return sr
+        return rb or sr or {}
+    return {}
+
 def write_current_track_to_file(output_dir="obs_output", source="auto"):
     """
     Writes current song information to files for OBS use.
@@ -112,10 +140,32 @@ def write_current_track_to_file(output_dir="obs_output", source="auto"):
                 'track_info.json': json.dumps(track_info, default=str, ensure_ascii=False, indent=2)
             }
             
-            for filename, content in files_to_write.items():
+            for filename, filecontent in files_to_write.items():
                 filepath = os.path.join(output_dir, filename)
                 with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(content)
+                    f.write(filecontent)
+            
+            # Write per-deck output
+            decks = get_current_tracks_by_deck(source)
+            if decks:
+                for deck_id, deck_track in decks.items():
+                    deck_dir = os.path.join(output_dir, f"deck_{deck_id}")
+                    if not os.path.exists(deck_dir):
+                        os.makedirs(deck_dir)
+                    
+                    deck_artist_title = f"{deck_track['artist']} - {deck_track['title']}"
+                    
+                    deck_files_to_write = {
+                        'current_track.txt': deck_artist_title,
+                        'artist.txt': deck_track['artist'],
+                        'title.txt': deck_track['title'],
+                        'album.txt': deck_track['album']
+                    }
+                    
+                    for filename, filecontent in deck_files_to_write.items():
+                        filepath = os.path.join(deck_dir, filename)
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(filecontent)
             
             print(f"Files updated in '{output_dir}' (source: {track_source}):")
             print(f"   current_track.txt: {artist_title}")
