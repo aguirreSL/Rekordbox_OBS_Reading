@@ -158,55 +158,6 @@ def _parse_entry(entry_data):
     return fields
 
 
-def _entry_to_track_info(entry, session_path=None):
-    """
-    Converts a raw parsed entry dict into the standard track info format
-    used by the rest of the application.
-    
-    Args:
-        entry: Dict of field_id -> value from parse_session_file
-        session_path: Path of the source session file
-        
-    Returns:
-        dict: Standardized track information
-    """
-    # Extract timestamp
-    timestamp = entry.get(FIELD_TIMESTAMP) or entry.get(FIELD_END_TIME) or entry.get(FIELD_START_TIME)
-    last_played = None
-    if timestamp and isinstance(timestamp, int) and timestamp > 0:
-        try:
-            last_played = datetime.fromtimestamp(timestamp)
-        except (ValueError, OSError):
-            last_played = datetime.now()
-    else:
-        last_played = datetime.now()
-    
-    # Determine track number from row ID
-    track_number = entry.get(FIELD_ROW_ID, 0)
-    
-    # Extract the session ID for history name
-    session_id = entry.get(FIELD_SESSION_ID, 0)
-    session_name = f"Serato Session {session_id}"
-    if session_path:
-        session_name = f"Serato - {os.path.basename(session_path)}"
-    
-    return {
-        'title': entry.get(FIELD_TITLE, "Unknown Title"),
-        'artist': entry.get(FIELD_ARTIST, "Unknown Artist"),
-        'album': entry.get(FIELD_ALBUM, "Unknown Album"),
-        'genre': entry.get(FIELD_GENRE, "Unknown Genre"),
-        'file_path': entry.get(FIELD_FILEPATH, "Unknown Path"),
-        'last_played': last_played,
-        'history_name': session_name,
-        'track_number': track_number,
-        'is_spotify': False,
-        'key': entry.get(FIELD_KEY, ""),
-        'hardware': entry.get(FIELD_HARDWARE, ""),
-        'deck': entry.get(FIELD_DECK, 0),
-        'source': 'serato'
-    }
-
-
 # Audio file extensions that Serato DJ Pro can play
 AUDIO_EXTENSIONS = (
     '.mp3', '.m4a', '.wav', '.flac', '.aiff', '.aif',
@@ -214,16 +165,28 @@ AUDIO_EXTENSIONS = (
 )
 
 
+def _is_real_track_path(path):
+    """
+    Returns False for audio files that are not user tracks (Serato's own app
+    resource sounds). Keeps real tracks loaded on the decks.
+    """
+    low = path.lower()
+    if 'serato dj pro.app/' in low:   # app-bundle resource sounds
+        return False
+    return True
+
+
 def _get_live_deck_files():
     """
-    Uses lsof to detect audio files currently open by Serato DJ Pro.
-    
-    Serato keeps the audio files of tracks loaded on its decks open as
-    file descriptors. By listing open files for the Serato process, we
-    can determine what is currently loaded/playing in real-time.
-    
+    Uses lsof to detect audio files Serato currently has OPEN, which indicates
+    a track that is actually PLAYING (not merely loaded/cued).
+
+    Serato opens a deck's audio file while it plays it. A track that is only
+    loaded/cued (paused) does NOT keep the file open, so lsof distinguishes
+    "playing" from "loaded".
+
     Returns:
-        list[str]: List of absolute paths to audio files currently open
+        list[str]: Absolute paths to audio files currently open (playing).
     """
     try:
         result = subprocess.run(
@@ -232,25 +195,31 @@ def _get_live_deck_files():
         )
         if result.returncode != 0:
             return []
-        
+
         audio_files = []
+        seen = set()
         for line in result.stdout.splitlines():
-            # lsof output columns are separated by whitespace, but file paths
-            # can contain spaces. The path is everything after the inode column.
-            # Format: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-            # We look for lines containing audio file extensions
+            # lsof columns: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+            # NAME (path) is everything after the 8th column and may have spaces
             lower_line = line.lower()
-            if any(ext in lower_line for ext in AUDIO_EXTENSIONS):
-                # Extract the file path - it starts after the NODE column
-                # Split into at most 9 parts (the 9th part onwards is the path)
-                parts = line.split(None, 8)
-                if len(parts) >= 9:
-                    filepath = parts[8]
-                    if os.path.isfile(filepath):
-                        audio_files.append(filepath)
-        
+            if not any(ext in lower_line for ext in AUDIO_EXTENSIONS):
+                continue
+            parts = line.split(None, 8)
+            if len(parts) < 9:
+                continue
+            filepath = parts[8]
+            if not filepath.lower().endswith(AUDIO_EXTENSIONS):
+                continue
+            if not _is_real_track_path(filepath):
+                continue
+            if filepath in seen:
+                continue
+            if os.path.isfile(filepath):
+                seen.add(filepath)
+                audio_files.append(filepath)
+
         return audio_files
-        
+
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         print(f"Warning: Could not run lsof for live deck detection: {e}")
         return []
@@ -395,41 +364,52 @@ def _get_decks_from_sqlite():
 
 def get_current_tracks_by_deck():
     """
-    Gets the currently LOADED track per deck from Serato DJ Pro.
+    Gets the tracks currently PLAYING per deck on Serato DJ Pro (real-time).
 
-    Only signals that reflect what is actually on the decks right now are used:
-      1. SQLite database — rows with end_time = -1 mark tracks loaded on a deck
-         (works even when paused). Most reliable.
-      2. lsof — Serato keeps the audio file of each loaded deck open as a file
-         descriptor; if no audio files are open, nothing is loaded.
+    "Playing" (not merely loaded/cued) is detected with lsof: Serato keeps a
+    deck's audio file open only while it plays it. A loaded-but-paused track is
+    therefore excluded. Rich metadata and the real deck number come from the
+    SQLite history_entry rows (end_time = -1), matched to the playing files by
+    filename.
 
-    The session history file is deliberately NOT used as a fallback: it is a
-    play *history* and always contains the last tracks played, so reading it
-    here reports unloaded tracks as if they were still on the decks (e.g. a
-    finished set keeps showing the last song). When both signals above are
-    empty, nothing is loaded and we return {}.
+    The SQLite "end_time = -1" rows by themselves mark LOADED tracks (Serato
+    writes the row on load), so they are not used alone — they are intersected
+    with the lsof "playing" set. The session history file is never used.
 
     Returns:
-        dict: A mapping of deck number (int) to track information dict.
-              Empty dict means nothing is currently loaded.
+        dict: Mapping of deck number (int) to track info. Empty dict means
+              nothing is currently playing.
     """
     try:
-        # 1. SQLite database (most reliable, works when paused)
-        sqlite_decks = _get_decks_from_sqlite()
-        if sqlite_decks:
-            return sqlite_decks
+        # lsof => files actually being read => the tracks that are PLAYING
+        playing = _get_live_deck_files()
+        if not playing:
+            return {}
 
-        # 2. lsof live detection (audio files Serato currently holds open)
-        live_files = _get_live_deck_files()
-        if live_files:
-            decks = {}
-            for i, filepath in enumerate(live_files):
-                deck_id = i + 1
-                decks[deck_id] = _build_track_info_from_file(filepath, deck_id)
-            return decks
+        playing_by_base = {}
+        for path in playing:
+            playing_by_base.setdefault(os.path.basename(path), path)
 
-        # Nothing loaded.
-        return {}
+        # SQLite loaded-deck rows give metadata + real deck numbers
+        loaded = _get_decks_from_sqlite() or {}
+
+        decks = {}
+        used = set()
+        for deck_id, track in loaded.items():
+            base = os.path.basename(track.get('file_path', '') or '')
+            if base in playing_by_base:
+                decks[deck_id] = track
+                used.add(base)
+
+        # Any playing file without a SQLite match: build info from the filename
+        next_deck = max(decks) if decks else 0
+        for base, path in playing_by_base.items():
+            if base in used:
+                continue
+            next_deck += 1
+            decks[next_deck] = _build_track_info_from_file(path, next_deck)
+
+        return decks
     except Exception as e:
         print(f"Error reading Serato decks: {e}")
         return {}
@@ -449,24 +429,3 @@ def get_current_playing_track():
         last_deck_id = max(decks.keys())
         return decks[last_deck_id]
     return None
-
-
-def get_latest_session_mtime():
-    """
-    Returns the modification time for source auto-detection.
-    
-    If Serato has tracks loaded on decks (via SQLite), returns the
-    current time to ensure it takes priority over other sources.
-    
-    Returns:
-        float: Modification time as Unix timestamp, or 0 if not found
-    """
-    # Check SQLite for active decks
-    sqlite_decks = _get_decks_from_sqlite()
-    if sqlite_decks:
-        return datetime.now().timestamp()
-    
-    session_path = find_latest_session()
-    if session_path:
-        return os.path.getmtime(session_path)
-    return 0

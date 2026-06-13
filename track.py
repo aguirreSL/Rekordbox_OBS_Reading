@@ -21,9 +21,9 @@ import rekordbox_reader
 import serato_reader
 
 
-# A track is added to the history only after it has been continuously on a deck
-# for this many seconds (i.e. it actually "played"), not the moment it's loaded.
-# Matches Rekordbox's "played" threshold. Tune via env var.
+# A track is added to the history only after it has been PLAYING continuously
+# for this many seconds, not the moment it's loaded/cued. Matches Rekordbox's
+# "played" threshold. Tune via env var.
 HISTORY_PLAYED_SECONDS = int(os.environ.get('HISTORY_PLAYED_SECONDS', '30'))
 
 
@@ -112,45 +112,37 @@ def get_current_tracks_by_deck(source="auto"):
         return rb or sr or {}
     return {}
 
-def write_current_track_to_file(output_dir="obs_output", source="auto"):
+def write_decks_to_files(decks, output_dir="obs_output", source="auto", verbose=True):
     """
-    Writes current song information to files for OBS use.
-    
-    Uses deck data as the single source of truth. The 'current track'
-    files show the most recently loaded track across all decks.
-    
+    Writes the given PLAYING decks to the OBS output files.
+
     Args:
+        decks: mapping deck_id -> track-info for the tracks playing right now.
+               If empty, current/deck outputs are blanked (history untouched).
         output_dir: Directory where files will be saved
-        source: DJ software source to read from
+        source: DJ software source label
+        verbose: print a summary line
+
+    Note: history is NOT updated here. The current/deck files reflect what is
+    PLAYING right now; history is maintained by the monitor, which only adds a
+    track after it has been playing for the played threshold (>30s).
     """
     try:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
-        
-        decks = get_current_tracks_by_deck(source)
-        
+
         if not decks:
-            # No decks found, try single track as fallback
-            track_info = get_current_playing_track(source)
-            if not track_info:
-                # Nothing is loaded: blank current-track + deck outputs so
-                # OBS shows nothing (history is kept).
-                clear_current_track_files(output_dir)
-                print("No song detected - files cleared")
-                return False
-            decks = {1: track_info}
-        
-        # Use the last deck as the "current" track for main files
+            # Nothing playing: blank current-track + deck outputs (history kept)
+            clear_current_track_files(output_dir)
+            if verbose:
+                print("Nothing playing - current/deck files cleared")
+            return False
+
+        # Use the highest deck as the "current" track for the main files
         last_deck_id = max(decks.keys())
         track_info = decks[last_deck_id]
-        
         artist_title = f"{track_info['artist']} - {track_info['title']}"
         track_source = track_info.get('source', source)
-
-        # NOTE: history is NOT updated here. The current/deck files reflect what
-        # is loaded right now; history is maintained separately by the monitor,
-        # which only adds a track after it has been on a deck for the played
-        # threshold (>30s). See monitor_and_update().
 
         files_to_write = {
             'current_track.txt': artist_title,
@@ -163,14 +155,14 @@ def write_current_track_to_file(output_dir="obs_output", source="auto"):
  {track_info['last_played'].strftime('%H:%M:%S')}""",
             'track_info.json': json.dumps(track_info, default=str, ensure_ascii=False, indent=2)
         }
-        
+
         for filename, filecontent in files_to_write.items():
             filepath = os.path.join(output_dir, filename)
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(filecontent)
-        
-        # Blank any existing deck folders first so decks that were unloaded
-        # don't keep showing stale tracks, then write only the loaded decks.
+
+        # Blank any existing deck folders first so decks that stopped playing
+        # don't keep showing stale tracks, then write only the playing decks.
         for deck_dir in glob.glob(os.path.join(output_dir, 'deck_*')):
             if os.path.isdir(deck_dir):
                 for fn in ('current_track.txt', 'artist.txt', 'title.txt', 'album.txt'):
@@ -182,31 +174,38 @@ def write_current_track_to_file(output_dir="obs_output", source="auto"):
             deck_dir = os.path.join(output_dir, f"deck_{deck_id}")
             if not os.path.exists(deck_dir):
                 os.makedirs(deck_dir)
-            
-            deck_artist_title = f"{deck_track['artist']} - {deck_track['title']}"
-            
+
             deck_files_to_write = {
-                'current_track.txt': deck_artist_title,
+                'current_track.txt': f"{deck_track['artist']} - {deck_track['title']}",
                 'artist.txt': deck_track['artist'],
                 'title.txt': deck_track['title'],
-                'album.txt': deck_track['album']
+                'album.txt': deck_track['album'],
             }
-            
             for filename, filecontent in deck_files_to_write.items():
                 filepath = os.path.join(deck_dir, filename)
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(filecontent)
-        
-        print(f"Files updated in '{output_dir}' (source: {track_source}):")
-        print(f"   current_track.txt: {artist_title}")
-        for deck_id, deck_track in sorted(decks.items()):
-            print(f"   deck_{deck_id}/: {deck_track['artist']} - {deck_track['title']}")
+
+        if verbose:
+            print(f"Files updated in '{output_dir}' (source: {track_source}):")
+            print(f"   current_track.txt: {artist_title}")
+            for deck_id, deck_track in sorted(decks.items()):
+                print(f"   deck_{deck_id}/: {deck_track['artist']} - {deck_track['title']}")
 
         return True
-            
+
     except Exception as e:
         print(f"Error writing files: {e}")
         return False
+
+
+def write_current_track_to_file(output_dir="obs_output", source="auto"):
+    """
+    One-shot: read what is PLAYING now and write it to the OBS files.
+    Used by the `write` CLI command.
+    """
+    decks = get_current_tracks_by_deck(source)
+    return write_decks_to_files(decks, output_dir, source)
 
 
 def clear_current_track_files(output_dir="obs_output"):
@@ -312,31 +311,25 @@ def update_music_history(track_info, output_dir="obs_output", max_history=15):
             with open(history_json_file, 'w', encoding='utf-8') as f:
                 json.dump(history, f, ensure_ascii=False, indent=2)
             
-            # Formatted text for OBS
+            # Formatted text for OBS (no "current" marker — clean list)
             with open(history_file, 'w', encoding='utf-8') as f:
                 f.write("MUSIC HISTORY (Last 15)\n")
                 f.write("=" * 50 + "\n\n")
-                
                 for i, track in enumerate(history, 1):
-                    if i == 1:
-                        f.write(f"{i:2d}. {track['artist']} - {track['title']} CURRENT\n")
-                    else:
-                        f.write(f"   {i:2d}. {track['artist']} - {track['title']}\n")
+                    f.write(f"{i:2d}. {track['artist']} - {track['title']}\n")
                     f.write(f"       Album: {track['album']} | Last Played: {track['played_at']}\n\n")
-            
+
             # Simple version
             simple_history_file = os.path.join(output_dir, 'history_simple.txt')
             with open(simple_history_file, 'w', encoding='utf-8') as f:
-                for i, track in enumerate(history, 1):
-                    prefix = ">>> " if i == 1 else "    "
-                    f.write(f"{prefix}{track['artist']} - {track['title']}\n")
-            
+                for track in history:
+                    f.write(f"{track['artist']} - {track['title']}\n")
+
             # Numbered version
             numbered_history_file = os.path.join(output_dir, 'history_numbered.txt')
             with open(numbered_history_file, 'w', encoding='utf-8') as f:
                 for i, track in enumerate(history, 1):
-                    marker = " (Current)" if i == 1 else ""
-                    f.write(f"{i:2d}. {track['artist']} - {track['title']}{marker}\n")
+                    f.write(f"{i:2d}. {track['artist']} - {track['title']}\n")
     
     except Exception as e:
         print(f"Error updating history: {e}")
@@ -363,61 +356,53 @@ def monitor_and_update(output_dir="obs_output", interval=10, source="auto"):
     clear_history(output_dir)
     print(f"Output cleared - fresh session (history threshold: {HISTORY_PLAYED_SECONDS}s)\n")
 
-    last_decks = {}   # deck_id -> "artist - title" (last written snapshot)
-    # Per-deck timing for the "played >Ns" history rule:
-    #   deck_id -> {'track_id', 'since': datetime, 'in_history': bool, 'track': dict}
-    deck_timers = {}
+    def key(track):
+        return track.get('file_path') or f"{track['artist']} - {track['title']}"
+
+    playing_since = {}   # track key -> first time it was seen playing
+    added = set()        # track keys already written to history this session
+    empty_polls = 0      # consecutive polls with nothing playing (anti-flicker)
+    last_snapshot = None
 
     try:
         while True:
-            decks = get_current_tracks_by_deck(source)
             now = datetime.now()
-            snapshot = {
-                deck_id: f"{t['artist']} - {t['title']}"
-                for deck_id, t in decks.items()
-            }
+            decks = get_current_tracks_by_deck(source)   # what's PLAYING now
 
-            # --- History: add a track only after it has been on a deck >= N s ---
-            for deck_id, track in decks.items():
-                track_id = snapshot[deck_id]
-                timer = deck_timers.get(deck_id)
-                if not timer or timer['track_id'] != track_id:
-                    # New track on this deck — start its timer
-                    deck_timers[deck_id] = {
-                        'track_id': track_id, 'since': now,
-                        'in_history': False, 'track': track,
-                    }
-                else:
-                    timer['track'] = track
-                    if (not timer['in_history'] and
-                            (now - timer['since']).total_seconds() >= HISTORY_PLAYED_SECONDS):
-                        update_music_history(track, output_dir)
-                        timer['in_history'] = True
-                        print(f"+ History (played >{HISTORY_PLAYED_SECONDS}s): {track_id}")
-            # Drop timers for decks no longer loaded
-            for deck_id in list(deck_timers):
-                if deck_id not in decks:
-                    del deck_timers[deck_id]
+            # History: add a track once it has played >= threshold seconds
+            keys_now = set()
+            for track in decks.values():
+                k = key(track)
+                keys_now.add(k)
+                playing_since.setdefault(k, now)
+                if k not in added and (now - playing_since[k]).total_seconds() >= HISTORY_PLAYED_SECONDS:
+                    update_music_history(track, output_dir)
+                    added.add(k)
+                    print(f"+ History: {track['artist']} - {track['title']}")
+            # Forget tracks that stopped (a later replay restarts their timer)
+            for k in set(playing_since) - keys_now:
+                del playing_since[k]
 
-            # --- Current/deck output: reflect real-time deck state ---
-            if snapshot != last_decks:
-                removed = set(last_decks) - set(snapshot)
-                for deck_id in sorted(removed):
-                    print(f"Deck {deck_id} unloaded")
-                for deck_id in sorted(snapshot):
-                    if last_decks.get(deck_id) != snapshot[deck_id]:
-                        src = decks[deck_id].get('source', source)
-                        print(f"Deck {deck_id} loaded [{src}]: {snapshot[deck_id]}")
-
-                # Writes loaded decks (or blanks everything when nothing loaded)
-                write_current_track_to_file(output_dir, source)
-                last_decks = snapshot
+            # Anti-flicker: ignore a single empty poll (brief lsof gap) before
+            # blanking the display.
+            if not decks:
+                empty_polls += 1
+                if empty_polls == 1 and last_snapshot:
+                    time.sleep(interval)
+                    continue
             else:
-                if snapshot:
-                    deck_summary = " | ".join(
-                        f"D{d}: {t}" for d, t in sorted(snapshot.items())
-                    )
-                    print(f"No changes [{deck_summary}]")
+                empty_polls = 0
+
+            snapshot = {d: f"{t['artist']} - {t['title']}" for d, t in decks.items()}
+            if snapshot != last_snapshot:
+                prev = last_snapshot or {}
+                for d in sorted(set(prev) - set(snapshot)):
+                    print(f"Deck {d} stopped")
+                for d in sorted(snapshot):
+                    if prev.get(d) != snapshot[d]:
+                        print(f"Deck {d} playing: {snapshot[d]}")
+                write_decks_to_files(decks, output_dir, source, verbose=False)
+                last_snapshot = snapshot
 
             time.sleep(interval)
             

@@ -156,47 +156,50 @@ The system creates an `obs_output` directory containing multiple file formats:
 
 ### Rekordbox Detection
 
-Live deck detection uses **lsof** — Rekordbox keeps each loaded deck's audio
-file open as a file descriptor, so this reflects what is on the decks the moment
-a track is loaded (real-time, no delay).
+Detection uses **lsof** — Rekordbox opens a deck's audio file while it plays it,
+so this reflects what is playing in real time (no delay).
 
 - Returns nothing when Rekordbox is **not running**
 - Internal audio (sampler banks, app UI sounds) is filtered out; only real
-  user tracks loaded on decks are detected
+  user tracks are detected
 - Track metadata (artist/title/album/genre) is read from the Rekordbox library
   (content table) via pyrekordbox; falls back to parsing `Artist - Title` from
   the filename if the file isn't in the library
 - The play-**history** database is intentionally **not** used: it only logs
   tracks after they pass Rekordbox's "played" threshold (e.g. 30s), so it lags
-  and does not represent what is currently on the decks
+  and does not represent what is on the decks right now
 - No modification of Rekordbox data
 
 ### Serato DJ Pro Detection
 
-Live deck detection uses signals that reflect what is **actually loaded** right now:
+Detection reports only what is **actually playing** (not merely loaded/cued):
 
-1. **SQLite database** (`~/Library/Application Support/Serato/Library/master.sqlite`)
-   — rows with `end_time = -1` mark tracks currently loaded on a deck (works even
-   when paused). Primary, most reliable signal.
-2. **lsof** — Serato keeps each loaded deck's audio file open as a file
-   descriptor; if no audio files are open, nothing is loaded.
+1. **lsof** — Serato opens a deck's audio file only while it is **playing** it.
+   A loaded-but-paused (cued) track keeps no file open, so lsof distinguishes
+   "playing" from "loaded". This is the source of truth for what's on air.
+2. **SQLite database** (`~/Library/Application Support/Serato/Library/master.sqlite`)
+   — rows with `end_time = -1` (loaded tracks) provide rich metadata (artist,
+   title, album, key, BPM) and the real deck number, matched to the playing
+   files by filename.
 
-When both signals are empty, nothing is loaded and detection returns nothing.
-The session history files in `~/Music/_Serato_/History/Sessions/` are **not**
-used for live detection — they are a play history and would report unloaded
-tracks as still on the decks.
+Note: Serato writes the `end_time = -1` row on **load**, so SQLite alone marks
+*loaded* tracks; it is intersected with lsof to keep only the *playing* ones.
+The session history files in `~/Music/_Serato_/History/Sessions/` are not used.
 
 ### Current Track vs. History
 
 These are two distinct outputs:
 
-- **Current / per-deck files** reflect what is loaded on the decks **right now**
-  (real-time, via lsof). If a deck has a track it is written; if nothing is
-  loaded, the files are left empty.
+- **Current / per-deck files** reflect what is **playing right now** (real-time,
+  via lsof). A track that is only loaded/cued (paused) is **not** shown — only
+  audible tracks. If nothing is playing, the files are left empty.
 - **History files** list tracks that actually **played**: a track is added to
-  the history only after it has been on a deck continuously for the played
-  threshold (default **30s**, set via `HISTORY_PLAYED_SECONDS`). Loading and
+  the history only after it has been playing continuously for the played
+  threshold (default **30s**, set via `HISTORY_PLAYED_SECONDS`). Cueing or
   quickly swapping a track does not add it to history.
+
+A single empty detection poll (brief lsof gap) is ignored before blanking, so a
+playing track does not flicker out of the display.
 
 History details:
 - Rolling history of the last 15 played tracks
