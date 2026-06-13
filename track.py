@@ -109,6 +109,9 @@ def write_current_track_to_file(output_dir="obs_output", source="auto"):
     """
     Writes current song information to files for OBS use.
     
+    Uses deck data as the single source of truth. The 'current track'
+    files show the most recently loaded track across all decks.
+    
     Args:
         output_dir: Directory where files will be saved
         source: DJ software source to read from
@@ -117,78 +120,97 @@ def write_current_track_to_file(output_dir="obs_output", source="auto"):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         
-        track_info = get_current_playing_track(source)
+        decks = get_current_tracks_by_deck(source)
         
-        if track_info:
-            artist_title = f"{track_info['artist']} - {track_info['title']}"
-            
-            # Update history
-            update_music_history(track_info, output_dir)
-            
-            # Source label for display
-            track_source = track_info.get('source', source)
-            
-            files_to_write = {
-                'current_track.txt': artist_title,
-                'artist.txt': track_info['artist'],
-                'title.txt': track_info['title'],
-                'album.txt': track_info['album'],
-                'full_info.txt': f"""{track_info['title']}
+        if not decks:
+            # No decks found, try single track as fallback
+            track_info = get_current_playing_track(source)
+            if not track_info:
+                empty_files = ['current_track.txt', 'artist.txt', 'title.txt', 'album.txt']
+                for filename in empty_files:
+                    filepath = os.path.join(output_dir, filename)
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write("No song playing")
+                print("No song detected - files cleared")
+                return False
+            decks = {1: track_info}
+        
+        # Use the last deck as the "current" track for main files
+        last_deck_id = max(decks.keys())
+        track_info = decks[last_deck_id]
+        
+        artist_title = f"{track_info['artist']} - {track_info['title']}"
+        track_source = track_info.get('source', source)
+        
+        # Update history with all deck tracks
+        for deck_id in sorted(decks.keys()):
+            update_music_history(decks[deck_id], output_dir)
+        
+        files_to_write = {
+            'current_track.txt': artist_title,
+            'artist.txt': track_info['artist'],
+            'title.txt': track_info['title'],
+            'album.txt': track_info['album'],
+            'full_info.txt': f"""{track_info['title']}
  {track_info['artist']}
  {track_info['album']}
  {track_info['last_played'].strftime('%H:%M:%S')}""",
-                'track_info.json': json.dumps(track_info, default=str, ensure_ascii=False, indent=2)
+            'track_info.json': json.dumps(track_info, default=str, ensure_ascii=False, indent=2)
+        }
+        
+        for filename, filecontent in files_to_write.items():
+            filepath = os.path.join(output_dir, filename)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(filecontent)
+        
+        # Write per-deck output
+        for deck_id, deck_track in decks.items():
+            deck_dir = os.path.join(output_dir, f"deck_{deck_id}")
+            if not os.path.exists(deck_dir):
+                os.makedirs(deck_dir)
+            
+            deck_artist_title = f"{deck_track['artist']} - {deck_track['title']}"
+            
+            deck_files_to_write = {
+                'current_track.txt': deck_artist_title,
+                'artist.txt': deck_track['artist'],
+                'title.txt': deck_track['title'],
+                'album.txt': deck_track['album']
             }
             
-            for filename, filecontent in files_to_write.items():
-                filepath = os.path.join(output_dir, filename)
+            for filename, filecontent in deck_files_to_write.items():
+                filepath = os.path.join(deck_dir, filename)
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(filecontent)
-            
-            # Write per-deck output
-            decks = get_current_tracks_by_deck(source)
-            if decks:
-                for deck_id, deck_track in decks.items():
-                    deck_dir = os.path.join(output_dir, f"deck_{deck_id}")
-                    if not os.path.exists(deck_dir):
-                        os.makedirs(deck_dir)
-                    
-                    deck_artist_title = f"{deck_track['artist']} - {deck_track['title']}"
-                    
-                    deck_files_to_write = {
-                        'current_track.txt': deck_artist_title,
-                        'artist.txt': deck_track['artist'],
-                        'title.txt': deck_track['title'],
-                        'album.txt': deck_track['album']
-                    }
-                    
-                    for filename, filecontent in deck_files_to_write.items():
-                        filepath = os.path.join(deck_dir, filename)
-                        with open(filepath, 'w', encoding='utf-8') as f:
-                            f.write(filecontent)
-            
-            print(f"Files updated in '{output_dir}' (source: {track_source}):")
-            print(f"   current_track.txt: {artist_title}")
-            print(f"   artist.txt: {track_info['artist']}")
-            print(f"   title.txt: {track_info['title']}")
-            print(f"   full_info.txt: Complete information")
-            print(f"   track_info.json: JSON data")
-            print(f"   history.txt: History of last 15 songs")
-            
-            return True
-        else:
-            empty_files = ['current_track.txt', 'artist.txt', 'title.txt', 'album.txt']
-            for filename in empty_files:
-                filepath = os.path.join(output_dir, filename)
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write("No song playing")
-            
-            print("No song detected - files cleared")
-            return False
+        
+        print(f"Files updated in '{output_dir}' (source: {track_source}):")
+        print(f"   current_track.txt: {artist_title}")
+        for deck_id, deck_track in sorted(decks.items()):
+            print(f"   deck_{deck_id}/: {deck_track['artist']} - {deck_track['title']}")
+        print(f"   history.txt: History of last 15 songs")
+        
+        return True
             
     except Exception as e:
         print(f"Error writing files: {e}")
         return False
+
+
+def clear_history(output_dir="obs_output"):
+    """
+    Clears all history files so the session starts fresh.
+    
+    Args:
+        output_dir: Directory where history files are stored
+    """
+    history_files = [
+        'history.json', 'history.txt',
+        'history_simple.txt', 'history_numbered.txt'
+    ]
+    for filename in history_files:
+        filepath = os.path.join(output_dir, filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
 
 
 def update_music_history(track_info, output_dir="obs_output", max_history=15):
@@ -278,27 +300,43 @@ def monitor_and_update(output_dir="obs_output", interval=10, source="auto"):
     print(f" Checking every {interval} seconds")
     print("Press Ctrl+C to stop\n")
     
-    last_track = None
+    # Start with a clean history for this session
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    clear_history(output_dir)
+    print("History cleared - starting fresh session\n")
+    
+    last_decks = {}  # deck_id -> "artist - title"
     
     try:
         while True:
-            current_track = get_current_playing_track(source)
+            decks = get_current_tracks_by_deck(source)
             
-            if current_track:
-                current_id = f"{current_track['artist']} - {current_track['title']}"
-                track_source = current_track.get('source', source)
+            if decks:
+                changed = False
+                for deck_id, track in sorted(decks.items()):
+                    track_id = f"{track['artist']} - {track['title']}"
+                    track_source = track.get('source', source)
+                    
+                    if last_decks.get(deck_id) != track_id:
+                        print(f"Deck {deck_id} changed [{track_source}]: {track_id}")
+                        update_music_history(track, output_dir)
+                        changed = True
+                    
+                    last_decks[deck_id] = track_id
                 
-                if current_id != last_track:
-                    print(f"New song detected [{track_source}]: {current_id}")
+                if changed:
                     write_current_track_to_file(output_dir, source)
-                    last_track = current_id
                 else:
-                    print(f"Current song [{track_source}]: {current_id}")
+                    deck_summary = " | ".join(
+                        f"D{d}: {t}" for d, t in sorted(last_decks.items())
+                    )
+                    print(f"No changes [{deck_summary}]")
             else:
-                if last_track is not None:
+                if last_decks:
                     print("No song detected")
                     write_current_track_to_file(output_dir, source)
-                    last_track = None
+                    last_decks = {}
             
             time.sleep(interval)
             
