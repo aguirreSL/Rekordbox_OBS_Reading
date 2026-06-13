@@ -307,28 +307,120 @@ def _build_track_info_from_file(filepath, deck_number=0):
         'source': 'serato'
     }
 
+# Path to Serato's SQLite database
+SERATO_SQLITE_DB = os.path.expanduser(
+    "~/Library/Application Support/Serato/Library/master.sqlite"
+)
+
+
+def _get_decks_from_sqlite():
+    """
+    Reads the currently loaded tracks per deck from Serato's SQLite database.
+    
+    Serato stores history entries with end_time = -1 for tracks that are
+    currently loaded on a deck. The 'deck' column contains the deck number.
+    This works regardless of play/pause state.
+    
+    Returns:
+        dict: A mapping of deck number (int) to track information dict,
+              or None if the database is not accessible.
+    """
+    import sqlite3 as sqlite3_mod
+    
+    if not os.path.isfile(SERATO_SQLITE_DB):
+        return None
+    
+    try:
+        conn = sqlite3_mod.connect(
+            f"file:{SERATO_SQLITE_DB}?mode=ro",
+            uri=True, timeout=2
+        )
+        conn.row_factory = sqlite3_mod.Row
+        cursor = conn.cursor()
+        
+        # Tracks currently loaded on decks have end_time = -1
+        cursor.execute("""
+            SELECT deck, name, artist, album, genre, key, bpm,
+                   file_name, start_time
+            FROM history_entry
+            WHERE end_time = -1
+            ORDER BY start_time DESC
+        """)
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return None
+        
+        decks = {}
+        for row in rows:
+            try:
+                deck_id = int(row['deck'])
+            except (ValueError, TypeError):
+                continue
+            
+            if deck_id <= 0 or deck_id in decks:
+                continue
+            
+            start_time = row['start_time']
+            try:
+                last_played = datetime.fromtimestamp(start_time) if start_time else datetime.now()
+            except (ValueError, OSError):
+                last_played = datetime.now()
+            
+            decks[deck_id] = {
+                'title': row['name'] or "Unknown Title",
+                'artist': row['artist'] or "Unknown Artist",
+                'album': row['album'] or "Unknown Album",
+                'genre': row['genre'] or "Unknown Genre",
+                'file_path': row['file_name'] or "",
+                'last_played': last_played,
+                'history_name': "Serato Live",
+                'track_number': deck_id,
+                'is_spotify': False,
+                'key': row['key'] or "",
+                'hardware': "",
+                'deck': deck_id,
+                'bpm': row['bpm'] or 0,
+                'source': 'serato'
+            }
+        
+        return decks if decks else None
+        
+    except Exception as e:
+        print(f"Warning: Could not read Serato SQLite database: {e}")
+        return None
+
 
 def get_current_tracks_by_deck():
     """
     Gets the currently loaded track per deck from Serato DJ Pro.
     
-    First tries lsof to detect tracks loaded on decks in real-time.
-    Falls back to session file parsing if lsof returns no results.
+    Priority:
+      1. SQLite database (tracks with end_time=-1, works even when paused)
+      2. lsof live detection (fallback if SQLite unavailable)
+      3. Session file parsing (last resort)
     
     Returns:
         dict: A mapping of deck number (int) to track information dict.
     """
     try:
-        # Try live detection first via lsof
+        # 1. Try SQLite database (most reliable, works when paused)
+        sqlite_decks = _get_decks_from_sqlite()
+        if sqlite_decks:
+            return sqlite_decks
+        
+        # 2. Try lsof live detection
         live_files = _get_live_deck_files()
         if live_files:
             decks = {}
             for i, filepath in enumerate(live_files):
-                deck_id = i + 1  # 1-based deck numbering
+                deck_id = i + 1
                 decks[deck_id] = _build_track_info_from_file(filepath, deck_id)
             return decks
         
-        # Fall back to session file parsing
+        # 3. Fall back to session file parsing
         session_path = find_latest_session()
         if not session_path:
             return {}
@@ -355,56 +447,34 @@ def get_current_playing_track():
     """
     Gets the currently playing/loaded track from Serato DJ Pro.
     
-    First tries lsof to detect tracks loaded on decks in real-time.
-    Falls back to session file parsing if lsof returns no results.
+    Derives from get_current_tracks_by_deck for consistency.
     
     Returns:
         dict: Track information or None if not found
     """
-    try:
-        # Try live detection first via lsof
-        live_files = _get_live_deck_files()
-        if live_files:
-            # Return the last loaded file (most recent deck load)
-            return _build_track_info_from_file(live_files[-1], len(live_files))
-        
-        # Fall back to session file parsing
-        session_path = find_latest_session()
-        if not session_path:
-            return None
-        
-        entries = parse_session_file(session_path)
-        if not entries:
-            return None
-        
-        # The last entry in the session is the most recent track
-        latest_entry = entries[-1]
-        
-        return _entry_to_track_info(latest_entry, session_path)
-        
-    except Exception as e:
-        print(f"Error reading Serato data: {e}")
-        return None
+    decks = get_current_tracks_by_deck()
+    if decks:
+        last_deck_id = max(decks.keys())
+        return decks[last_deck_id]
+    return None
 
 
 def get_latest_session_mtime():
     """
-    Returns the modification time of the latest session file,
-    useful for 'auto' source detection.
+    Returns the modification time for source auto-detection.
     
-    When Serato has live tracks loaded (detected via lsof), returns
-    the current time to ensure it takes priority over other sources.
+    If Serato has tracks loaded on decks (via SQLite), returns the
+    current time to ensure it takes priority over other sources.
     
     Returns:
         float: Modification time as Unix timestamp, or 0 if not found
     """
-    # If Serato has live tracks loaded, return current time
-    live_files = _get_live_deck_files()
-    if live_files:
+    # Check SQLite for active decks
+    sqlite_decks = _get_decks_from_sqlite()
+    if sqlite_decks:
         return datetime.now().timestamp()
     
     session_path = find_latest_session()
     if session_path:
         return os.path.getmtime(session_path)
     return 0
-
