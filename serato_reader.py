@@ -167,11 +167,19 @@ AUDIO_EXTENSIONS = (
 
 def _is_real_track_path(path):
     """
-    Returns False for audio files that are not user tracks (Serato's own app
-    resource sounds). Keeps real tracks loaded on the decks.
+    Returns False for audio files that are not user tracks. Keeps real tracks
+    loaded on the decks.
+
+    Excludes:
+      - Serato's app-bundle resource sounds ('serato dj pro.app/').
+      - Anything inside Serato's internal data folder ('_Serato_/'), which the
+        app keeps open while recording (e.g. '_Serato_/Recording temp/Serato
+        Recording 1.aif') and which never holds the user's music library.
     """
     low = path.lower()
     if 'serato dj pro.app/' in low:   # app-bundle resource sounds
+        return False
+    if '/_serato_/' in low:           # internal data dir (recordings, etc.)
         return False
     return True
 
