@@ -8,14 +8,14 @@ A real-time music information system that extracts currently playing track data 
 <img width="698" height="452" alt="Screenshot 2025-10-14 at 20 22 25" src="https://github.com/user-attachments/assets/8e4a1852-cab8-4604-84a9-10e5f792e751" />
 
 
-This tool monitors your DJ software's database/session files for track changes and automatically generates multiple text files containing current song information. These files can be used as text sources in OBS Studio to display real-time music information during live streams or recordings.
+This tool monitors which audio file your DJ software has open while playing (via `lsof`) and automatically generates multiple text files containing current song information. These files can be used as text sources in OBS Studio to display real-time music information during live streams or recordings.
 
 ### Supported DJ Software
 
 | Software | Detection Method | Notes |
 |----------|-----------------|-------|
-| **Rekordbox** (6.2.0+) | SQLite database | 1-2 min delay after track transitions |
-| **Serato DJ Pro** | Session history files | Near real-time detection |
+| **Rekordbox** (6.2.0+) | `lsof` (open audio file) + library metadata | Real-time, no delay |
+| **Serato DJ Pro** | `lsof` ∩ SQLite (`master.sqlite`) | Real-time; only actually-playing tracks |
 
 ## System Requirements
 
@@ -219,13 +219,15 @@ History details:
 ### Serato DJ Pro Issues
 
 **No track detection:**
-- Ensure Serato DJ Pro is running and has played at least one track
-- Verify the `_Serato_` folder exists at `~/Music/_Serato_/`
-- Check that session files exist in `~/Music/_Serato_/History/Sessions/`
+- Ensure Serato DJ Pro is running and is **playing** a track (a loaded/cued but
+  paused track keeps no file open, so it is intentionally not detected)
+- Verify the SQLite library exists at
+  `~/Library/Application Support/Serato/Library/master.sqlite`
+- Check that Python has read access to that database
 
 **Stale track data:**
-- Serato session files update when tracks are loaded/played
-- Try loading a new track onto a deck
+- Detection is real-time via `lsof`; if a track lingers, confirm it is actually
+  playing (not just loaded) on a deck
 
 ### General Issues
 
@@ -243,8 +245,8 @@ History details:
 ```
 RekordboxReading/
 ├── track.py                 # Main application & CLI
-├── rekordbox_reader.py      # Rekordbox database reader
-├── serato_reader.py         # Serato session file parser
+├── rekordbox_reader.py      # Rekordbox reader (lsof + library metadata)
+├── serato_reader.py         # Serato reader (lsof + master.sqlite)
 ├── setup.sh/.bat            # Installation scripts
 ├── start_obs_monitor.sh/.bat # Start monitoring
 ├── stop_obs_monitor.sh/.bat  # Stop monitoring
