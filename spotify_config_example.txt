@@ -1,0 +1,24 @@
+# Spotify API Configuration (Optional)
+# To enable Spotify track metadata, you need to create a Spotify App:
+# 1. Go to https://developer.spotify.com/dashboard
+# 2. Log in with your Spotify account
+# 3. Click "Create an App"
+# 4. Fill in the app name and description
+# 5. Copy the Client ID and Client Secret
+# 6. Set these environment variables before running the script:
+
+# Option 1: Export in your terminal session
+# export SPOTIFY_CLIENT_ID="your_client_id_here"
+# export SPOTIFY_CLIENT_SECRET="your_client_secret_here"
+
+# Option 2: Add to your ~/.zshrc or ~/.bashrc (permanent)
+# echo 'export SPOTIFY_CLIENT_ID="your_client_id_here"' >> ~/.zshrc
+# echo 'export SPOTIFY_CLIENT_SECRET="your_client_secret_here"' >> ~/.zshrc
+# source ~/.zshrc
+
+# Option 3: Create a .env file in this directory
+# SPOTIFY_CLIENT_ID=your_client_id_here
+# SPOTIFY_CLIENT_SECRET=your_client_secret_here
+
+# Note: Without Spotify credentials, Spotify tracks will show as "Unknown"
+# Local music files will work perfectly without any configuration

@@ -53,6 +53,10 @@ obs_output/
 *.txt
 *.json
 
+# ...but keep project files that happen to be .txt
+!requirements.txt
+!spotify_config_example.txt
+
 # Logs
 *.log
 
